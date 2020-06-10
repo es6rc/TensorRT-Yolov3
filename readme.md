@@ -37,6 +37,7 @@ It also needs to change the yolo configs in "YoloConfigs.h" if different kernels
 
 ```bash
 #build source code
+git clone https://github.com/es6rc/TensorRT-Yolov3.git
 git submodule update --init --recursive
 mkdir build
 cd build && cmake .. && make && make install
@@ -45,14 +46,29 @@ cd ..
 #for yolov3-608
 ./install/runYolov3 --caffemodel=./yolov3_608.caffemodel --prototxt=./yolov3_608.prototxt --input=./test.jpg --W=608 --H=608 --class=80
 
-#for fp16
-./install/runYolov3 --caffemodel=./yolov3_608.caffemodel --prototxt=./yolov3_608.prototxt --input=./test.jpg --W=608 --H=608 --class=80 --mode=fp16
+# for ods_yolov3_80
+./install/runYolov3 --caffemodel=./models/yolov3/yolov3_608.caffemodel --prototxt=./models/yolov3/yolov3_608_trt.prototxt --input=./dog.jpg --W=608 --H=608 --class=80 --nms=0.65 --mode=fp16
+
+# for ods_yolo engine 80 class
+./install/runYolov3 --enginefile=ods_yolov3_80.engine --input=./17_2_20200224115331649_O_3.jpg --output=17_2_20200224115331649_O_3_res.jpg --W=608 --H=608 --class=80 --nms=0.30 --mode=fp16
+./install/runYolov3 --enginefile=ods_yolov3_80.engine --evallist=/home/zhengh/repos/TensorRT-Yolov3/data/val.txt --W=608 --H=608 --class=80 --nms=0.30 --mode=fp16
+# for ods_yolo engine 1 class
+./install/runYolov3 --enginefile=ods_yolov3_fp16_01.engine --input=./17_2_20200224115331649_O_3.jpg --output=17_2_20200224115331649_O_3_res.jpg --W=608 --H=608 --class=1 --nms=0.65 --mode=fp16
+
+# for ods_yolov3 parse model 
+./install/runYolov3 --caffemodel=./models/yolov3/ods_yolov3.caffemodel --prototxt=./models/yolov3/ods_yolov3.prototxt --input=./17_2_20200224115331649_O_3.jpg --output=17_2_20200224115331649_O_3_res.jpg --W=608 --H=608 --class=80 --nms=0.65 --mode=fp16
+
+# for ods_yolov3_80 parse model
+./install/runYolov3 --caffemodel=./models/yolov3/ods_yolov3_80_final.caffemodel --prototxt=./models/yolov3/ods_yolov3_80.prototxt --input=./17_2_20200224115331649_O_3.jpg --output=17_2_20200224115331649_O_3_res.jpg --W=608 --H=608 --class=80 --nms=0.65 --mode=fp16
+
+# for original yolov3 model engine
+./install/runYolov3 --enginefile=yolov3_fp16_downloaded_608.engine --input=./17_2_20200224115331649_O_3.jpg --output=17_2_20200224115331649_O_3_res.jpg --W=608 --H=608 --class=1 --nms=0.65 --mode=fp16
 
 #for int8 with calibration datasets
 ./install/runYolov3 --caffemodel=./yolov3_608.caffemodel --prototxt=./yolov3_608.prototxt --input=./test.jpg --W=608 --H=608 --class=80 --mode=int8 --calib=./calib_sample.txt
 
 #for yolov3-416 (need to modify include/YoloConfigs for YoloKernel)
-./install/runYolov3 --caffemodel=./yolov3_416.caffemodel --prototxt=./yolov3_416.prototxt --input=./test.jpg --W=416 --H=416 --class=80
+./install/runYolov3 --caffemodel=./models/yolov3/yolov3_416.caffemodel --prototxt=./models/yolov3/yolov3_416_trt.prototxt --input=./test.jpg --W=416 --H=416 --class=80
 ```
 
 

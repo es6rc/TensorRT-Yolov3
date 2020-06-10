@@ -7,6 +7,9 @@
 #include "dataReader.h"
 #include "eval.h"
 
+// #include <filesystem>
+// namespace fs = std::filesystem;
+
 using namespace std;
 using namespace argsParser;
 using namespace Tn;
@@ -24,7 +27,7 @@ vector<float> prepareImage(cv::Mat& img)
     auto scaleSize = cv::Size(img.cols * scale,img.rows * scale);
 
     cv::Mat rgb ;
-    cv::cvtColor(img, rgb, CV_BGR2RGB);
+    cv::cvtColor(img, rgb, cv::COLOR_BGR2RGB);
     cv::Mat resized;
     cv::resize(rgb, resized,scaleSize,0,0,INTER_CUBIC);
 
@@ -61,8 +64,11 @@ void DoNms(vector<Detection>& detections,int classes ,float nmsThresh)
     resClass.resize(classes);
 
     for (const auto& item : detections)
+    {
+        // std::cout << item.prob << std::endl;
+        assert (item.classId <= classes);
         resClass[item.classId].push_back(item);
-
+    }
     auto iouCompute = [](float * lbox, float* rbox)
     {
         float interBox[] = {
@@ -135,28 +141,37 @@ vector<Bbox> postProcessImg(cv::Mat& img,vector<Detection>& detections,int class
         bbox[1] = (bbox[1] * h - (h - scaleSize[1])/2.f) / scaleSize[1];
         bbox[2] /= scaleSize[0];
         bbox[3] /= scaleSize[1];
+        // std::cout << item.classId << '\t';
     }
-    
+    std::cout << std::endl;
     //nms
     float nmsThresh = parser::getFloatValue("nms");
+    std::cout << "nms threshold = " << nmsThresh << std::endl;
+    std::cout << "Before NMS, #ofDetections = " << detections.size() << std::endl;
     if(nmsThresh > 0) 
         DoNms(detections,classes,nmsThresh);
-
+    std::cout << "After NMS, #ofDetections = " << detections.size() << std::endl;
     vector<Bbox> boxes;
     for(const auto& item : detections)
     {
         auto& b = item.bbox;
-        Bbox bbox = 
-        { 
-            item.classId,   //classId
-            max(int((b[0]-b[2]/2.)*width),0), //left
-            min(int((b[0]+b[2]/2.)*width),width), //right
-            max(int((b[1]-b[3]/2.)*height),0), //top
-            min(int((b[1]+b[3]/2.)*height),height), //bot
-            item.prob       //score
-        };
-        boxes.push_back(bbox);
+        // if (item.prob >= 0.80)
+        {
+            Bbox bbox = 
+            { 
+                item.classId,   //classId
+                max(int((b[0]-b[2]/2.)*width),0), //left
+                min(int((b[0]+b[2]/2.)*width),width), //right
+                max(int((b[1]-b[3]/2.)*height),0), //top
+                min(int((b[1]+b[3]/2.)*height),height), //bot
+                item.prob       //score
+            };
+            boxes.push_back(bbox);
+        }
     }
+    // std::cout << "Output only detections of confidence bigger than 0.60 and class is person" << std::endl
+    std::cout << "#ofDetections = " << boxes.size() << std::endl;
+
 
     return boxes;
 }
@@ -187,7 +202,9 @@ int main( int argc, char* argv[] )
     parser::ADD_ARG_FLOAT("nms",Desc("non-maximum suppression value"),DefaultValue(to_string(NMS_THRESH)));
     parser::ADD_ARG_INT("batchsize",Desc("batch size for input"),DefaultValue("1"));
     parser::ADD_ARG_STRING("enginefile",Desc("load from engine"),DefaultValue(""));
-
+    parser::ADD_ARG_STRING("output",Desc("output result image name"),DefaultValue("result.jpg"));
+    parser::ADD_ARG_STRING("thres",Desc("Coverage Threshold"),DefaultValue("0.85"));
+    
     //input
     parser::ADD_ARG_STRING("input",Desc("input image file"),DefaultValue(INPUT_IMAGE),ValueDesc("file"));
     parser::ADD_ARG_STRING("evallist",Desc("eval gt list"),DefaultValue(EVAL_LIST),ValueDesc("file"));
@@ -259,13 +276,14 @@ int main( int argc, char* argv[] )
     auto outputNames = split(outputNodes,',');
     
         //save Engine name
-    string saveName = "yolov3_" + mode + ".engine";
+    string saveName = "ods_yolov3_01" + mode + ".engine";
         net.reset(new trtNet(deployFile,caffemodelFile,outputNames,calibData,run_mode,batchSize));
     cout << "save Engine..." << saveName <<endl;
         net->saveEngine(saveName);
     }
 
     int outputCount = net->getOutputSize()/sizeof(float);
+    std::cout << "number of output is " << outputCount << std::endl; // 18x(19^2+38^2+76^2) = 136458 + 1
     unique_ptr<float[]> outputData(new float[outputCount]);
 
     string listFile = parser::getStringValue("evallist");
@@ -274,8 +292,18 @@ int main( int argc, char* argv[] )
 
     if(listFile.length() > 0)
     {
-        std::cout << "loading from eval list " << listFile << std::endl; 
-        tie(fileNames,groundTruth) = readObjectLabelFileList(listFile);
+        std::cout << "loading from eval list " << listFile << std::endl;
+        ifstream fileList (listFile);
+        string line;
+        if (fileList.is_open())
+        {
+            for (line; getline(fileList, line); /**/)
+            {
+                std::cout << line << std::endl;
+                fileNames.push_back(line);
+            }
+        }
+        // tie(fileNames,groundTruth) = readObjectLabelFileList(listFile);
     }
     else
     {
@@ -296,7 +324,7 @@ int main( int argc, char* argv[] )
     auto iter = fileNames.begin();
     for (unsigned int i = 0;i < fileNames.size(); ++i ,++iter)
     {
-        const string& filename  = *iter;
+        string& filename  = *iter;
 
         std::cout << "process: " << filename << std::endl;
 
@@ -315,7 +343,11 @@ int main( int argc, char* argv[] )
         if(batchCount < batchSize && i + 1 <  fileNames.size())
             continue;
 
-        net->doInference(inputData.data(), outputData.get(),batchCount);
+        float total1kTime = 0;
+        // Do Inference 10 times
+        for (int z = 0; z < 1; z++)
+            total1kTime += net->doInfer(inputData.data(), outputData.get(),batchCount);
+        // std::cout << "Average Running Time is " << total1kTime / 1. << "ms" << std::endl;
 
         //Get Output    
         auto output = outputData.get();
@@ -324,24 +356,41 @@ int main( int argc, char* argv[] )
         {    
             //first detect count
             int detCount = output[0];
+            std::cout << "detection count: " << detCount << std::endl;
             //later detect result
             vector<Detection> result;
             result.resize(detCount);
             memcpy(result.data(), &output[1], detCount*sizeof(Detection));
-
-            auto boxes = postProcessImg(inputImgs[i],result,classNum);
+            // for (int i = 0; i < outputCount; i++)
+            //     std::cout << "output at idx " << i << "is float number: " << std::to_string(output[i]) << std::endl;
+            auto boxes = postProcessImg(inputImgs[i], result, classNum);
             outputs.emplace_back(boxes);
 
             output += outputSize;
         }
+
+        // Drop BBoxes on output images
+
+        for(const auto& item : outputs.back())
+        {
+            cv::rectangle(img, cv::Point(item.left,item.top),cv::Point(item.right,item.bot),cv::Scalar(0,0,255),1,8,0);
+            cv::putText(img, "score:" + std::to_string(item.score*100), cv::Point(item.left,item.top), 0, 0.6, cv::Scalar(0,250,0));
+            
+        }
+        // string output = parser::getStringValue("output");
+        string outputName = filename;
+        // outputName.insert(filename.size()-4, "res");
+        size_t replace_loc = outputName.find("val");
+        outputName.replace(replace_loc, 3, "res");
+        std::cout << outputName << std::endl;
+        cv::imwrite(outputName, img);
         inputImgs.clear();
         inputData.clear();
-
         batchCount = 0;
     }
     
     
-    net->printTime();        
+    //net->printTime();        
 
     if(groundTruth.size() > 0)
     {
@@ -350,21 +399,24 @@ int main( int argc, char* argv[] )
         evalMAPResult(outputs,groundTruth,classNum,0.75f);
     }
 
-    if(fileNames.size() == 1)
-    {
-        //draw on image
-        cv::Mat img = cv::imread(*fileNames.begin());
-        auto bbox = *outputs.begin();
-        for(const auto& item : bbox)
-        {
-            cv::rectangle(img,cv::Point(item.left,item.top),cv::Point(item.right,item.bot),cv::Scalar(0,0,255),3,8,0);
-            cout << "class=" << item.classId << " prob=" << item.score*100 << endl;
-            cout << "left=" << item.left << " right=" << item.right << " top=" << item.top << " bot=" << item.bot << endl;
-        }
-        cv::imwrite("result.jpg",img);
-        cv::imshow("result",img);
-        cv::waitKey(0);
-    }
+    // if(fileNames.size() == 1)
+    // {
+    //     //draw on image
+    //     cv::Mat img = cv::imread(*fileNames.begin());
+    //     auto bbox = *outputs.begin();
+    //     for(const auto& item : bbox)
+    //     {
+    //         cv::rectangle(img,cv::Point(item.left,item.top),cv::Point(item.right,item.bot),cv::Scalar(0,0,255),3,8,0);
+    //         cv::putText(img, std::to_string(item.score*100), cv::Point(item.left,item.top), 5, 0.8, cv::Scalar(200,200,250));
+    //         cout << "class=" << item.classId << " prob=" << item.score*100 << endl;
+    //         cout << "left=" << item.left << " right=" << item.right << " top=" << item.top << " bot=" << item.bot << endl;
+    //     }
+    //     // string output = parser::getStringValue("output");
+    //     string outputName = filename.insert(filename.end()-4, "res");
+    //     cv::imwrite(outputName,img);
+    //     // cv::imshow("result",img);
+    //     // cv::waitKey(0);
+    // }
 
     return 0;
 }
